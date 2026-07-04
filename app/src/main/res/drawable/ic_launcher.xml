@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Black space disc -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M54,54m-52,0a52,52 0,1 1,104 0a52,52 0,1 1,-104 0" />
+    <!-- Vector ship -->
+    <path
+        android:strokeColor="#FF48FFDE"
+        android:strokeWidth="4"
+        android:fillColor="#00000000"
+        android:pathData="M82,54 L38,76 L48,54 L38,32 Z" />
+    <!-- Stars -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M24,30m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0 M78,26m-1.6,0a1.6,1.6 0,1 1,3.2 0a1.6,1.6 0,1 1,-3.2 0 M88,74m-2,0a2,2 0,1 1,4 0a2,2 0,1 1,-4 0 M28,80m-1.4,0a1.4,1.4 0,1 1,2.8 0a1.4,1.4 0,1 1,-2.8 0" />
+</vector>
