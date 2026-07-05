@@ -6,9 +6,10 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
- * The whole battlefield: a large bounded rectangle littered with asteroids,
- * barriers, stars (with orbiting planets) and black holes. Stars, planets and
- * black holes pull on ships and shots.
+ * The whole battlefield: a large bounded rectangle littered with drifting
+ * asteroids, suns (with orbiting planets) and paired wormholes. Suns, planets
+ * and wormholes pull on ships and shots; suns kill on contact, wormholes
+ * fling you out of their twin, and planets capture ships into a repair orbit.
  *
  * The same class serves three roles:
  *  - single player: simulated locally via [step]
@@ -21,14 +22,15 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
     val ships = mutableListOf<Ship>()
     val shots = mutableListOf<Shot>()
     val asteroids = mutableListOf<Asteroid>()
-    val barriers = mutableListOf<Barrier>()
     val stars = mutableListOf<Star>()
     val planets = mutableListOf<Planet>()
-    val blackHoles = mutableListOf<BlackHole>()
+    val wormholes = mutableListOf<Wormhole>()
     val explosions = mutableListOf<Explosion>()
+    val beams = mutableListOf<Beam>()
 
-    /** Explosions spawned since last drain; the host relays these to clients. */
+    /** Events since last drain; the host relays these to clients. */
     val boomLog = mutableListOf<Explosion>()
+    val beamLog = mutableListOf<Beam>()
     /** Ships destroyed since last drain (id -> killer id). */
     val deathLog = mutableListOf<Pair<Int, Int>>()
 
@@ -39,7 +41,7 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
 
     // ------------------------------------------------------------------
     // World generation (deterministic from seed; clients rebuild scenery
-    // locally so only dynamic state crosses the network)
+    // locally, then keep asteroids in sync from snapshots)
     // ------------------------------------------------------------------
 
     fun generate() {
@@ -62,48 +64,36 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
             return null
         }
 
-        // Stars with orbiting planets
+        // Suns with 1-4 orbiting planets each
         repeat(2) {
-            val maxOrbit = rand(320f, 480f)
+            val starRadius = rand(40f, 55f)
+            val planetCount = 1 + rnd.nextInt(4)
+            val maxOrbit = starRadius + 90f + (planetCount - 1) * 62f + 20f
             val p = place(maxOrbit + 60f) ?: return@repeat
-            val star = Star(p, rand(80f, 105f), 2.4e7f)
+            val star = Star(p, starRadius, 1.9e7f)
             stars += star
-            val planetCount = 1 + rnd.nextInt(2)
             for (i in 0 until planetCount) {
-                val orbitR = maxOrbit * (0.55f + 0.45f * i / max(1, planetCount - 1))
+                val orbitR = starRadius + 90f + i * 62f + rand(0f, 16f)
                 planets += Planet(
                     star, orbitR, rand(0f, TWO_PI),
                     (if (rnd.nextBoolean()) 1f else -1f) * rand(0.12f, 0.3f),
-                    rand(24f, 38f), 2.0e6f,
+                    rand(14f, 24f), 1.2e6f,
                 )
             }
         }
 
-        // Black holes
+        // Paired wormholes: fall into one, get flung out of the other
         repeat(2) {
-            val p = place(420f) ?: return@repeat
-            blackHoles += BlackHole(p, 55f, 4.2e7f)
+            val p = place(300f) ?: return@repeat
+            wormholes += Wormhole(p, 27f, 3.0e7f)
         }
 
-        // Barriers (long thin walls)
-        repeat(7) {
-            val horizontal = rnd.nextBoolean()
-            val len = rand(400f, 900f)
-            val thick = rand(50f, 80f)
-            val clear = len / 2f
-            val p = place(clear) ?: return@repeat
-            barriers += if (horizontal) {
-                Barrier(p.x - len / 2f, p.y - thick / 2f, len, thick)
-            } else {
-                Barrier(p.x - thick / 2f, p.y - len / 2f, thick, len)
-            }
-        }
-
-        // Asteroid field
-        repeat(46) {
-            val r = rand(30f, 85f)
-            val p = place(r) ?: return@repeat
-            asteroids += Asteroid(p, r, Asteroid.makeShape(rnd))
+        // Slowly drifting asteroid field
+        repeat(54) {
+            val r = rand(18f, 45f)
+            val p = place(r + 30f) ?: return@repeat
+            val drift = Vec2.fromAngle(rand(0f, TWO_PI), rand(8f, 35f))
+            asteroids += Asteroid(p, r, Asteroid.makeShape(rnd), drift)
         }
     }
 
@@ -124,13 +114,8 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
     private fun isClear(p: Vec2, clear: Float): Boolean {
         if (asteroids.any { it.pos.dist(p) < it.radius + clear }) return false
         if (stars.any { it.pos.dist(p) < it.radius + clear + 250f }) return false
-        if (blackHoles.any { it.pos.dist(p) < it.horizon + clear + 350f }) return false
+        if (wormholes.any { it.pos.dist(p) < it.horizon + clear + 250f }) return false
         if (planets.any { it.pos.dist(p) < it.radius + clear }) return false
-        if (barriers.any {
-                p.x > it.x - clear && p.x < it.x + it.w + clear &&
-                    p.y > it.y - clear && p.y < it.y + it.h + clear
-            }
-        ) return false
         return true
     }
 
@@ -154,12 +139,16 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
     fun step(dt: Float) {
         tick++
         for (p in planets) p.update(dt)
+        updateAsteroids(dt)
 
         for (s in ships) {
             if (!s.alive) continue
-            s.vel += gravityAt(s.pos) * dt
+            if (s.orbitPlanet == null) s.vel += gravityAt(s.pos) * dt
             s.update(this, dt)
-            collideShipWithWorld(s)
+            if (s.orbitPlanet == null) {
+                collideShipWithWorld(s)
+                if (s.alive) rideWormholes(s)
+            }
         }
 
         val shotIter = shots.iterator()
@@ -202,22 +191,69 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
         shots.removeAll { !it.alive }
         ships.removeAll { !it.alive }
 
-        updateExplosions(dt)
+        updateEffects(dt)
     }
 
     /** Client-side smoothing between snapshots: dead-reckon, no game rules. */
     fun clientAdvance(dt: Float) {
         boomLog.clear()
+        beamLog.clear()
         deathLog.clear()
         for (p in planets) p.update(dt)
+        for (a in asteroids) a.pos += a.vel * dt
         for (s in ships) if (s.alive) s.pos += s.vel * dt
         for (s in shots) s.pos += s.vel * dt
-        updateExplosions(dt)
+        updateEffects(dt)
     }
 
-    private fun updateExplosions(dt: Float) {
+    private fun updateEffects(dt: Float) {
         for (e in explosions) e.age += dt
         explosions.removeAll { it.done }
+        for (b in beams) b.age += dt
+        beams.removeAll { it.done }
+    }
+
+    private fun updateAsteroids(dt: Float) {
+        for (a in asteroids) {
+            a.pos += a.vel * dt
+            // Arena walls
+            if (a.pos.x < a.radius && a.vel.x < 0f) a.vel = Vec2(-a.vel.x, a.vel.y)
+            if (a.pos.x > width - a.radius && a.vel.x > 0f) a.vel = Vec2(-a.vel.x, a.vel.y)
+            if (a.pos.y < a.radius && a.vel.y < 0f) a.vel = Vec2(a.vel.x, -a.vel.y)
+            if (a.pos.y > height - a.radius && a.vel.y > 0f) a.vel = Vec2(a.vel.x, -a.vel.y)
+            // Bounce off suns, planets, wormholes
+            for (s in stars) bounceAsteroidOff(a, s.pos, s.radius)
+            for (p in planets) bounceAsteroidOff(a, p.pos, p.radius)
+            for (w in wormholes) bounceAsteroidOff(a, w.pos, w.horizon)
+        }
+        // Gentle asteroid-vs-asteroid separation (equal-mass elastic bounce)
+        for (i in asteroids.indices) {
+            for (j in i + 1 until asteroids.size) {
+                val a = asteroids[i]
+                val b = asteroids[j]
+                val minDist = a.radius + b.radius
+                if (a.pos.distSq(b.pos) >= minDist * minDist) continue
+                val n = (b.pos - a.pos).normalized()
+                val overlap = minDist - a.pos.dist(b.pos)
+                a.pos -= n * (overlap / 2f)
+                b.pos += n * (overlap / 2f)
+                val va = a.vel.dot(n)
+                val vb = b.vel.dot(n)
+                if (va - vb > 0f) {
+                    a.vel += n * (vb - va)
+                    b.vel += n * (va - vb)
+                }
+            }
+        }
+    }
+
+    private fun bounceAsteroidOff(a: Asteroid, c: Vec2, r: Float) {
+        val minDist = r + a.radius
+        if (a.pos.distSq(c) >= minDist * minDist) return
+        val n = (a.pos - c).normalized()
+        a.pos = c + n * minDist
+        val vn = a.vel.dot(n)
+        if (vn < 0f) a.vel -= n * (2f * vn)
     }
 
     private fun gravityAt(p: Vec2): Vec2 {
@@ -234,7 +270,7 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
         }
         for (s in stars) pull(s.pos, s.mass)
         for (pl in planets) pull(pl.pos, pl.mass)
-        for (b in blackHoles) pull(b.pos, b.mass)
+        for (w in wormholes) pull(w.pos, w.mass)
         return Vec2(ax, ay)
     }
 
@@ -252,7 +288,7 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
     }
 
     // ------------------------------------------------------------------
-    // Collisions
+    // Collisions & transits
     // ------------------------------------------------------------------
 
     private fun collideShipWithWorld(s: Ship) {
@@ -263,30 +299,43 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
         if (s.pos.y > height - s.radius) bounceShip(s, Vec2(0f, -1f), Vec2(s.pos.x, height - s.radius))
 
         for (a in asteroids) collideShipWithCircle(s, a.pos, a.radius)
-        for (p in planets) collideShipWithCircle(s, p.pos, p.radius)
 
         for (star in stars) {
-            val d = s.pos.dist(star.pos)
-            if (d < star.radius + s.radius) {
-                // Stellar surface: continuous burn plus a hard shove out.
-                val n = (s.pos - star.pos).normalized()
-                s.pos = star.pos + n * (star.radius + s.radius)
-                s.vel = n * max(s.vel.length() * 0.4f, 120f)
-                s.takeDamage(this, 25f)
-                addExplosion(s.pos, 30f)
-                if (!s.alive) return
-            }
-        }
-        for (b in blackHoles) {
-            if (s.pos.dist(b.pos) < b.horizon + s.radius * 0.5f) {
-                // Crossed the event horizon: nothing survives that.
+            if (s.pos.dist(star.pos) < star.radius + s.radius * 0.5f) {
+                // Flying into a sun is not survivable.
                 s.hull = 0f
                 s.alive = false
                 onShipDestroyed(s, -1)
                 return
             }
         }
-        for (bar in barriers) collideShipWithRect(s, bar)
+
+        // Brushing a planet captures the ship into a repair orbit.
+        if (s.orbitCooldown <= 0f) {
+            for (p in planets) {
+                if (s.pos.dist(p.pos) < p.radius + s.radius + 6f) {
+                    s.enterOrbit(p)
+                    return
+                }
+            }
+        }
+    }
+
+    /** Fall into a wormhole, get flung out of its twin. */
+    private fun rideWormholes(s: Ship) {
+        if (s.wormholeCooldown > 0f || wormholes.size < 2) return
+        for (hole in wormholes) {
+            if (s.pos.dist(hole.pos) >= hole.horizon + s.radius * 0.5f) continue
+            val exits = wormholes.filter { it !== hole }
+            val exit = exits[(s.id + tick).toInt().mod(exits.size)]
+            addExplosion(s.pos, 30f)
+            var dir = s.vel.normalized()
+            if (s.vel.length() < 20f) dir = (s.pos - hole.pos).normalized()
+            s.pos = exit.pos + dir * (exit.horizon + s.radius + 40f)
+            s.wormholeCooldown = 1.5f
+            addExplosion(s.pos, 30f)
+            return
+        }
     }
 
     private fun bounceShip(s: Ship, normal: Vec2, corrected: Vec2) {
@@ -310,44 +359,35 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
         }
     }
 
-    private fun collideShipWithRect(s: Ship, b: Barrier) {
-        val cx = s.pos.x.coerceIn(b.x, b.x + b.w)
-        val cy = s.pos.y.coerceIn(b.y, b.y + b.h)
-        val dx = s.pos.x - cx
-        val dy = s.pos.y - cy
-        val d2 = dx * dx + dy * dy
-        if (d2 >= s.radius * s.radius) return
-        val d = sqrt(max(d2, 1e-4f))
-        val n = if (d > 1e-3f) Vec2(dx / d, dy / d) else Vec2(0f, -1f)
-        s.pos = Vec2(cx, cy) + n * s.radius
-        val vn = s.vel.dot(n)
-        if (vn < 0f) {
-            s.vel -= n * (1.6f * vn)
-            impactDamage(s, -vn)
-        }
-    }
-
     private fun impactDamage(s: Ship, impactSpeed: Float) {
-        if (impactSpeed > 140f) {
-            s.takeDamage(this, (impactSpeed - 140f) * 0.06f)
+        if (impactSpeed > 120f) {
+            s.takeDamage(this, (impactSpeed - 120f) * 0.06f)
             addExplosion(s.pos, 20f)
         }
     }
 
-    /** @return true if the shot died on scenery. */
+    /** @return true if the shot died on scenery (or left through a wormhole). */
     private fun collideShotWithWorld(shot: Shot): Boolean {
         val p = shot.pos
         var hit = p.x < 0f || p.x > width || p.y < 0f || p.y > height
         if (!hit) hit = asteroids.any { it.pos.dist(p) < it.radius + shot.radius }
         if (!hit) hit = planets.any { it.pos.dist(p) < it.radius + shot.radius }
         if (!hit) hit = stars.any { it.pos.dist(p) < it.radius + shot.radius }
-        if (!hit) hit = barriers.any {
-            p.x > it.x - shot.radius && p.x < it.x + it.w + shot.radius &&
-                p.y > it.y - shot.radius && p.y < it.y + it.h + shot.radius
-        }
-        if (!hit && blackHoles.any { it.pos.dist(p) < it.horizon }) {
-            shot.alive = false  // swallowed silently
-            return true
+        if (!hit) {
+            for (hole in wormholes) {
+                if (p.dist(hole.pos) >= hole.horizon) continue
+                if (shot.kind == ShotKind.MINE || wormholes.size < 2) {
+                    shot.alive = false  // swallowed
+                    return true
+                }
+                // Shots ride wormholes too.
+                val exits = wormholes.filter { it !== hole }
+                val exit = exits[(shot.id + tick).toInt().mod(exits.size)]
+                val dir = if (shot.vel.length() > 20f) shot.vel.normalized()
+                    else (shot.pos - hole.pos).normalized()
+                shot.pos = exit.pos + dir * (exit.horizon + shot.radius + 30f)
+                return false
+            }
         }
         if (hit) {
             if (shot.kind == ShotKind.MINE) {
@@ -373,15 +413,32 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
                 shots += Shot(nextShotId++, ShotKind.MINE, owner.id, pos, owner.vel * 0.25f, spec.damage, spec.life)
             }
             else -> {
-                val kind = when (w) {
-                    WeaponType.PROJECTILE -> ShotKind.SLUG
-                    WeaponType.ENERGY -> ShotKind.BOLT
-                    else -> ShotKind.MISSILE
-                }
+                val kind = if (w == WeaponType.PROJECTILE) ShotKind.SLUG else ShotKind.MISSILE
                 val pos = owner.pos + dir * (owner.radius + 8f)
                 shots += Shot(nextShotId++, kind, owner.id, pos, owner.vel + dir * spec.speed, spec.damage, spec.life)
             }
         }
+    }
+
+    /**
+     * Phaser: instantly locks every visible hostile in range and splits the
+     * beam (and its damage) among them. @return false if nothing was in range.
+     */
+    fun fireBeam(owner: Ship, spec: WeaponSpec): Boolean {
+        val targets = ships.filter {
+            it.alive && it.id != owner.id && !it.cloakOn &&
+                it.pos.dist(owner.pos) <= spec.range
+        }
+        if (targets.isEmpty()) return false
+        val each = spec.damage / targets.size
+        for (t in targets) {
+            val beam = Beam(owner.pos, t.pos)
+            beams += beam
+            beamLog += beam
+            addExplosion(t.pos, 22f)
+            t.takeDamage(this, each, owner.id)
+        }
+        return true
     }
 
     private fun detonate(mine: Shot) {
@@ -393,7 +450,7 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
                 val falloff = 1f - (d / (Shot.MINE_BLAST_RADIUS + ship.radius)) * 0.6f
                 ship.takeDamage(this, mine.damage * falloff, mine.ownerId)
                 // Blast shove
-                ship.vel += (ship.pos - mine.pos).normalized() * 180f * falloff
+                ship.vel += (ship.pos - mine.pos).normalized() * 145f * falloff
             }
         }
     }

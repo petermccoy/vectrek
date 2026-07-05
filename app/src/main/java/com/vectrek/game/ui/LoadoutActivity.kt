@@ -27,6 +27,7 @@ class LoadoutActivity : Activity() {
     private var energyLevel = 0
     private var engineLevel = 0
     private var radarLevel = 0
+    private var hullStyle = 0
 
     private lateinit var pointsLabel: TextView
     private lateinit var saveButton: Button
@@ -42,6 +43,7 @@ class LoadoutActivity : Activity() {
         energyLevel = lo.energyLevel
         engineLevel = lo.engineLevel
         radarLevel = lo.radarLevel
+        hullStyle = lo.hullStyle
 
         val col = Ui.column(this)
         col.addView(Ui.title(this, "OUTFITTING", 24f), Ui.match())
@@ -62,8 +64,12 @@ class LoadoutActivity : Activity() {
                 setLevel = { weapons[w] = it },
                 describe = {
                     val s = weaponSpec(w, weapons[w] ?: 0)
-                    val ammo = if (s.ammo >= 0) "ammo ${s.ammo}" else "${s.energyCost.toInt()} energy/shot"
-                    "dmg ${s.damage.toInt()} · $ammo"
+                    if (s.ammo >= 0) {
+                        "dmg ${s.damage.toInt()} · ammo ${s.ammo}"
+                    } else {
+                        "beam: locks all ships in ${s.range.toInt()} range, " +
+                            "dmg ${s.damage.toInt()} split · ${s.energyCost.toInt()} energy/shot"
+                    }
                 },
             ), Ui.match())
         }
@@ -100,6 +106,10 @@ class LoadoutActivity : Activity() {
             "range ${(900 + 700 * radarLevel)}"
         }, Ui.match())
 
+        col.addView(Ui.space(this, 12f))
+        col.addView(Ui.label(this, "— HULL DESIGN (free) —", 11f), Ui.match())
+        col.addView(hullRow(), Ui.match())
+
         col.addView(Ui.space(this, 18f))
         saveButton = Ui.button(this, "SAVE FIT") {
             if (current().cost() <= Loadout.BUDGET) {
@@ -116,7 +126,31 @@ class LoadoutActivity : Activity() {
         refresh()
     }
 
-    private fun current() = Loadout(weapons.toMap(), defenses.toMap(), energyLevel, engineLevel, radarLevel)
+    private fun current() =
+        Loadout(weapons.toMap(), defenses.toMap(), energyLevel, engineLevel, radarLevel, hullStyle)
+
+    /** Cosmetic hull picker: cycle through the designs with < and >. */
+    private fun hullRow(): LinearLayout {
+        val row = Ui.row(this).apply {
+            setPadding(0, Ui.dp(this@LoadoutActivity, 6f), 0, Ui.dp(this@LoadoutActivity, 6f))
+        }
+        val nameText = Ui.label(this, "", 13f, Ui.ACCENT).apply { gravity = Gravity.CENTER }
+        val prev = Ui.smallButton(this, "<") {
+            hullStyle = (hullStyle + Loadout.HULL_NAMES.size - 1) % Loadout.HULL_NAMES.size
+            refresh()
+        }
+        val next = Ui.smallButton(this, ">") {
+            hullStyle = (hullStyle + 1) % Loadout.HULL_NAMES.size
+            refresh()
+        }
+        row.addView(prev)
+        row.addView(nameText, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(next)
+        refreshers += {
+            nameText.text = Loadout.HULL_NAMES[hullStyle]
+        }
+        return row
+    }
 
     private fun fmt(v: Float): String {
         val tenths = (v * 10).toInt()

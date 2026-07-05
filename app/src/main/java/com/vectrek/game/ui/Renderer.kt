@@ -18,7 +18,6 @@ object Palette {
     const val SELF = 0xFF48FFDE.toInt()
     const val ENEMY = 0xFFFF5A54.toInt()
     const val ASTEROID = 0xFF8A97A8.toInt()
-    const val BARRIER = 0xFF7686A0.toInt()
     const val STAR = 0xFFFFD24A.toInt()
     const val PLANET = 0xFF57A8FF.toInt()
     const val HOLE = 0xFFB86BFF.toInt()
@@ -99,18 +98,12 @@ class Renderer {
             paint.alpha = 70
             canvas.drawCircle(p.pos.x, p.pos.y, p.radius * 0.55f, paint)
         }
-        for (b in world.blackHoles) if (visible(b.pos, b.horizon * 3f)) drawBlackHole(canvas, b.pos, b.horizon, time)
+        for (h in world.wormholes) if (visible(h.pos, h.horizon * 3.5f)) drawWormhole(canvas, h.pos, h.horizon, time)
         for (a in world.asteroids) if (visible(a.pos, a.radius * 1.3f)) drawAsteroid(canvas, a.pos, a.radius, a.shape)
-        for (b in world.barriers) {
-            if (b.x + b.w > left && b.x < right && b.y + b.h > top && b.y < bottom) {
-                stroke(Palette.BARRIER, 3f)
-                canvas.drawRect(b.x, b.y, b.x + b.w, b.y + b.h, paint)
-                paint.alpha = 60
-                canvas.drawRect(b.x + 8f, b.y + 8f, b.x + b.w - 8f, b.y + b.h - 8f, paint)
-            }
-        }
 
         for (s in world.shots) if (visible(s.pos, 60f)) drawShot(canvas, s, time)
+
+        for (b in world.beams) drawBeam(canvas, b.from, b.to, b.age / b.duration)
 
         for (ship in world.ships) {
             if (!ship.alive) continue
@@ -186,19 +179,26 @@ class Renderer {
         }
     }
 
-    private fun drawBlackHole(canvas: Canvas, pos: Vec2, horizon: Float, time: Float) {
+    private fun drawWormhole(canvas: Canvas, pos: Vec2, horizon: Float, time: Float) {
         paint.style = Paint.Style.FILL
         paint.color = Color.BLACK
         canvas.drawCircle(pos.x, pos.y, horizon, paint)
-        stroke(Palette.HOLE, 3.5f)
+        stroke(Palette.HOLE, 3f)
         canvas.drawCircle(pos.x, pos.y, horizon, paint)
+        // Counter-rotating swirl arcs: a portal, not a grave.
         paint.strokeWidth = 2.5f
-        for (ring in 1..2) {
-            val r = horizon * (1f + ring * 0.65f)
-            paint.alpha = 150 / ring
-            val startDeg = -time * 80f * ring + ring * 120f
-            canvas.drawArc(pos.x - r, pos.y - r, pos.x + r, pos.y + r, startDeg, 250f, false, paint)
+        for (ring in 1..3) {
+            val r = horizon * (1f + ring * 0.55f)
+            paint.color = if (ring % 2 == 0) Palette.HOLE else Palette.SELF
+            paint.alpha = 170 - ring * 40
+            val dir = if (ring % 2 == 0) 1f else -1f
+            val startDeg = dir * time * 110f + ring * 100f
+            canvas.drawArc(pos.x - r, pos.y - r, pos.x + r, pos.y + r, startDeg, 210f, false, paint)
         }
+        paint.style = Paint.Style.FILL
+        paint.color = Palette.SELF
+        paint.alpha = (110 + 60 * sin(time * 5f)).toInt().coerceIn(50, 200)
+        canvas.drawCircle(pos.x, pos.y, horizon * 0.28f, paint)
     }
 
     private fun drawAsteroid(canvas: Canvas, pos: Vec2, radius: Float, shape: FloatArray) {
@@ -221,13 +221,6 @@ class Renderer {
                 stroke(Palette.SLUG, 3f)
                 val d = Vec2.fromAngle(s.heading, 12f)
                 canvas.drawLine(s.pos.x - d.x, s.pos.y - d.y, s.pos.x + d.x, s.pos.y + d.y, paint)
-            }
-            ShotKind.BOLT -> {
-                stroke(Palette.BOLT, 5f)
-                val d = Vec2.fromAngle(s.heading, 16f)
-                canvas.drawLine(s.pos.x - d.x, s.pos.y - d.y, s.pos.x + d.x, s.pos.y + d.y, paint)
-                paint.alpha = 70
-                canvas.drawCircle(s.pos.x, s.pos.y, 12f, paint)
             }
             ShotKind.MISSILE -> {
                 canvas.save()
@@ -257,6 +250,19 @@ class Renderer {
         }
     }
 
+    private fun drawBeam(canvas: Canvas, from: Vec2, to: Vec2, t: Float) {
+        val alpha = ((1f - t) * 255f).toInt().coerceIn(0, 255)
+        stroke(Palette.BOLT, 5f)
+        paint.alpha = alpha
+        canvas.drawLine(from.x, from.y, to.x, to.y, paint)
+        paint.strokeWidth = 12f
+        paint.alpha = alpha / 4
+        canvas.drawLine(from.x, from.y, to.x, to.y, paint)
+        paint.style = Paint.Style.FILL
+        paint.alpha = alpha
+        canvas.drawCircle(to.x, to.y, 8f * (1f - t) + 2f, paint)
+    }
+
     private fun drawShip(canvas: Canvas, ship: Ship, isMe: Boolean, time: Float) {
         val color = if (isMe) Palette.SELF else Palette.ENEMY
         val alpha = if (ship.cloakOn) 70 else 255
@@ -267,13 +273,52 @@ class Renderer {
         canvas.rotate(ship.heading * RAD_TO_DEG)
         stroke(color, 3f)
         paint.alpha = alpha
-        path.reset()
-        path.moveTo(r * 1.15f, 0f)
-        path.lineTo(-r * 0.8f, r * 0.7f)
-        path.lineTo(-r * 0.45f, 0f)
-        path.lineTo(-r * 0.8f, -r * 0.7f)
-        path.close()
-        canvas.drawPath(path, paint)
+
+        when (ship.hullStyle) {
+            1 -> {
+                // CRUISER: long hull with swept wings, Netrek-flavored.
+                path.reset()
+                path.moveTo(r * 1.3f, 0f)
+                path.lineTo(r * 0.2f, r * 0.35f)
+                path.lineTo(-r * 0.7f, r * 0.95f)
+                path.lineTo(-r * 1.0f, r * 0.55f)
+                path.lineTo(-r * 0.6f, 0f)
+                path.lineTo(-r * 1.0f, -r * 0.55f)
+                path.lineTo(-r * 0.7f, -r * 0.95f)
+                path.lineTo(r * 0.2f, -r * 0.35f)
+                path.close()
+                canvas.drawPath(path, paint)
+                paint.alpha = (alpha * 0.7f).toInt()
+                canvas.drawCircle(r * 0.55f, 0f, r * 0.18f, paint)
+            }
+            2 -> {
+                // TALON: forked twin-prong fighter, Omega Race-flavored.
+                path.reset()
+                path.moveTo(r * 1.1f, r * 0.45f)
+                path.lineTo(-r * 0.9f, r * 0.7f)
+                path.lineTo(-r * 0.5f, 0f)
+                path.lineTo(-r * 0.9f, -r * 0.7f)
+                path.lineTo(r * 1.1f, -r * 0.45f)
+                path.lineTo(r * 0.3f, 0f)
+                path.close()
+                canvas.drawPath(path, paint)
+                paint.alpha = (alpha * 0.7f).toInt()
+                canvas.drawLine(-r * 0.5f, 0f, r * 0.3f, 0f, paint)
+            }
+            else -> {
+                // SABER: angular dart with a canopy line.
+                path.reset()
+                path.moveTo(r * 1.2f, 0f)
+                path.lineTo(-r * 0.9f, r * 0.8f)
+                path.lineTo(-r * 0.4f, r * 0.3f)
+                path.lineTo(-r * 0.4f, -r * 0.3f)
+                path.lineTo(-r * 0.9f, -r * 0.8f)
+                path.close()
+                canvas.drawPath(path, paint)
+                paint.alpha = (alpha * 0.7f).toInt()
+                canvas.drawLine(r * 0.5f, 0f, -r * 0.3f, 0f, paint)
+            }
+        }
 
         if (ship.thrusting) {
             val flick = 0.7f + 0.3f * sin(time * 47f + ship.id * 3f)
@@ -288,6 +333,14 @@ class Renderer {
             stroke(Palette.SHIELD, 2.5f)
             paint.alpha = (90 + 50 * sin(time * 6f + ship.id)).toInt().coerceIn(40, 160)
             canvas.drawCircle(ship.pos.x, ship.pos.y, r * 1.7f, paint)
+        }
+        if (ship.inOrbit) {
+            // Parked halo: repairing at anchor.
+            stroke(Palette.PLANET, 2f)
+            paint.pathEffect = orbitDash
+            paint.alpha = 120
+            canvas.drawCircle(ship.pos.x, ship.pos.y, r * 2.1f, paint)
+            paint.pathEffect = null
         }
 
         if (!isMe && !ship.cloakOn) {

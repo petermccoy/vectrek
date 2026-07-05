@@ -25,18 +25,19 @@ enum class DefenseType(val label: String, val short: String, val cost: Int, val 
 }
 
 data class WeaponSpec(
-    val damage: Float,
+    val damage: Float,      // phaser: total damage, split among all locked targets
     val ammo: Int,          // -1 = unlimited (energy weapon)
     val cooldown: Float,    // seconds between shots
     val energyCost: Float,  // per shot
     val speed: Float,       // muzzle speed added to ship velocity
     val life: Float,        // seconds before the shot expires
+    val range: Float = 0f,  // phaser beam lock range
 )
 
 fun weaponSpec(type: WeaponType, level: Int): WeaponSpec = when (type) {
-    WeaponType.PROJECTILE -> WeaponSpec(8f + 3f * level, 40 + 15 * level, 0.22f, 0f, 720f, 1.6f)
-    WeaponType.ENERGY -> WeaponSpec(14f + 4f * level, -1, 0.38f, 12f - 1.5f * level, 950f, 1.1f)
-    WeaponType.GUIDED -> WeaponSpec(26f + 8f * level, 6 + 3 * level, 1.2f, 0f, 460f, 6f)
+    WeaponType.PROJECTILE -> WeaponSpec(8f + 3f * level, 40 + 15 * level, 0.24f, 0f, 575f, 1.8f)
+    WeaponType.ENERGY -> WeaponSpec(16f + 5f * level, -1, 0.55f, 12f - 1.5f * level, 0f, 0f, 620f + 60f * level)
+    WeaponType.GUIDED -> WeaponSpec(26f + 8f * level, 6 + 3 * level, 1.2f, 0f, 370f, 6.5f)
     WeaponType.MINE -> WeaponSpec(34f + 10f * level, 5 + 3 * level, 0.8f, 0f, 0f, 90f)
 }
 
@@ -55,6 +56,7 @@ data class Loadout(
     val energyLevel: Int = 0,  // 0..3: +25 max energy and +1.5 regen per level (2 pts each)
     val engineLevel: Int = 0,  // 0..2: +15% thrust/turn/speed per level (1 pt each)
     val radarLevel: Int = 0,   // 0..3: +700 radar range per level (1 pt each)
+    val hullStyle: Int = 0,    // cosmetic, free: index into HULL_NAMES
 ) {
     fun cost(): Int {
         var c = 0
@@ -77,11 +79,13 @@ data class Loadout(
         for ((d, lvl) in defenses) dj.put(d.name, lvl)
         o.put("w", wj); o.put("d", dj)
         o.put("en", energyLevel); o.put("eng", engineLevel); o.put("rad", radarLevel)
+        o.put("hs", hullStyle)
         return o
     }
 
     companion object {
         const val BUDGET = 20
+        val HULL_NAMES = arrayOf("SABER", "CRUISER", "TALON")
 
         /** Cannon + missiles + shield + cloak + energy I + radar I = 20 pts. */
         val DEFAULT = Loadout(
@@ -91,7 +95,7 @@ data class Loadout(
         )
 
         /** Cheap fit used by practice drones. */
-        val DRONE = Loadout(weapons = mapOf(WeaponType.PROJECTILE to 0))
+        val DRONE = Loadout(weapons = mapOf(WeaponType.PROJECTILE to 0), hullStyle = 2)
 
         fun fromJson(o: JSONObject): Loadout {
             val weapons = mutableMapOf<WeaponType, Int>()
@@ -109,6 +113,7 @@ data class Loadout(
                 o.optInt("en").coerceIn(0, 3),
                 o.optInt("eng").coerceIn(0, 2),
                 o.optInt("rad").coerceIn(0, 3),
+                o.optInt("hs").coerceIn(0, HULL_NAMES.size - 1),
             )
         }
     }
@@ -119,9 +124,10 @@ class ShipStats(loadout: Loadout) {
     val maxHull = 100f
     val maxEnergy = 100f + 25f * loadout.energyLevel
     val energyRegen = 6f + 1.5f * loadout.energyLevel
-    val thrustAccel = 260f * (1f + 0.15f * loadout.engineLevel)
-    val turnRate = 3.6f * (1f + 0.15f * loadout.engineLevel)
-    val maxSpeed = 420f * (1f + 0.10f * loadout.engineLevel)
+    // ~80% of the original pacing: slower, more deliberate flying.
+    val thrustAccel = 208f * (1f + 0.15f * loadout.engineLevel)
+    val turnRate = 3.1f * (1f + 0.15f * loadout.engineLevel)
+    val maxSpeed = 336f * (1f + 0.10f * loadout.engineLevel)
     val radarRange = 900f + 700f * loadout.radarLevel
     val thrustDrain = 5f  // energy per second while burning
 }

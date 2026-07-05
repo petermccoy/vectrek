@@ -15,20 +15,26 @@ Pure Kotlin, zero external dependencies — just the Android framework
   energy; drifting is free).
 - **The arena**: a large but bounded battlefield (8000×6000). Hitting the
   boundary bounces you — hard impacts damage the hull. The board is littered
-  with asteroids, barrier walls, stars with orbiting planets, and black
-  holes. Stars, planets and black holes exert real gravity on ships *and*
-  shots; crossing a black hole's event horizon is instantly fatal.
+  with slowly drifting asteroids, suns with 1–4 orbiting planets each, and
+  paired wormholes. Suns, planets and wormholes exert real gravity on ships
+  *and* shots. Touching a sun is instant death. Falling into a wormhole
+  flings you out of its twin somewhere else on the board, velocity intact —
+  shots ride wormholes too.
+- **Planets**: brush against one and your ship is captured into a parking
+  orbit where the hull slowly repairs — the only way to fix damage. A
+  LEAVE ORBIT button appears to cast off. You can still fire (and be hit)
+  while parked.
 - **Energy**: one shared pool feeds thrust, the energy weapon, shields and
   cloak. It regenerates slowly toward its maximum. Manage it or drift.
-- **Hull**: damage is never repaired. When the hull reaches zero, the ship
-  is destroyed and the game is over.
+- **Hull**: damage only mends in planetary orbit. When the hull reaches
+  zero, the ship is destroyed and the game is over.
 
 ## Weapons & defenses
 
 | System | Type | Limits |
 |---|---|---|
 | Cannon | fast projectile | limited ammo |
-| Phaser | energy bolt | unlimited, costs energy per shot |
+| Phaser | lock-on beam: instantly hits every visible ship in range, damage split among them | unlimited, costs energy per shot |
 | Missiles | guided, homes on nearest visible ship | limited ammo |
 | Mines | dropped behind, proximity-triggered blast | limited ammo |
 | Shields | soaks most of a hit, energy pays for what it absorbs | drains energy while raised |
@@ -44,6 +50,8 @@ soak). Points can also go into core systems:
 - **Energy cells** (2 pt/level): bigger pool, faster regeneration
 - **Engines** (1 pt/level): more thrust and turn rate
 - **Radar** (1 pt/level): longer minimap sensor range
+
+Hull design (SABER / CRUISER / TALON) is a free cosmetic pick.
 
 You can't afford everything — a cloaked mine-layer, a shielded brawler and
 a fast radar scout are all valid 20-point ships.

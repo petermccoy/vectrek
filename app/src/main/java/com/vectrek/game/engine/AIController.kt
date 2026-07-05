@@ -17,6 +17,13 @@ class AIController(seed: Long) : ShipController {
         val input = ship.input
         input.fireHeld.clear()
 
+        if (ship.orbitPlanet != null) {
+            // Parked for repairs: cast off once the hull is mostly patched.
+            input.leaveOrbit = ship.hull > ship.maxHull * 0.85f
+            return
+        }
+        input.leaveOrbit = false
+
         val enemy = world.ships
             .filter { it.alive && it.id != ship.id && !it.cloakOn }
             .minByOrNull { it.pos.distSq(ship.pos) }
@@ -24,7 +31,7 @@ class AIController(seed: Long) : ShipController {
         if (enemy != null && enemy.pos.dist(ship.pos) < 1500f) {
             val dist = enemy.pos.dist(ship.pos)
             // Lead the target by projectile flight time.
-            val lead = enemy.pos + enemy.vel * (dist / 720f)
+            val lead = enemy.pos + enemy.vel * (dist / 575f)
             input.steer = lead
             input.thrust = dist > 380f
             val aimError = abs(angleDiff((lead - ship.pos).angle(), ship.heading))

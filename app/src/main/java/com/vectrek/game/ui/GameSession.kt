@@ -92,6 +92,7 @@ class GameSession(
                 s.afterStep()
             } else {
                 w.boomLog.clear()
+                w.beamLog.clear()
                 w.deathLog.clear()
             }
             if (mode == Mode.SINGLE) updateDrones(w, dt)

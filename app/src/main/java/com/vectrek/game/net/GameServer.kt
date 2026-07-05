@@ -50,6 +50,7 @@ class GameServer(private val world: GameWorld) {
     @Volatile private var running = true
     private var stepCounter = 0
     private val pendingBooms = mutableListOf<Triple<Float, Float, Float>>()
+    private val pendingBeams = mutableListOf<com.vectrek.game.engine.Beam>()
 
     fun start() {
         Thread({ receiveLoop() }, "vectrek-server").start()
@@ -113,6 +114,8 @@ class GameServer(private val world: GameWorld) {
     fun afterStep() {
         for (e in world.boomLog) pendingBooms += Triple(e.pos.x, e.pos.y, e.size)
         world.boomLog.clear()
+        pendingBeams += world.beamLog
+        world.beamLog.clear()
         for ((deadId, _) in world.deathLog) {
             for (c in clients.values) if (c.shipId == deadId) c.dead = true
         }
@@ -130,8 +133,10 @@ class GameServer(private val world: GameWorld) {
 
         val booms = pendingBooms.toList()
         pendingBooms.clear()
+        val beams = pendingBeams.toList()
+        pendingBeams.clear()
         for (c in clients.values) {
-            send(Protocol.snapshot(world, c.shipId, !c.dead, booms), c)
+            send(Protocol.snapshot(world, c.shipId, !c.dead, booms, beams), c)
         }
     }
 

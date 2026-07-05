@@ -22,11 +22,13 @@ class ShipInput {
     val fireHeld = mutableSetOf<WeaponType>()
     var shield = false                   // toggle states, not momentary
     var cloak = false
+    var leaveOrbit = false               // held briefly after the LEAVE ORBIT tap
 
     fun copyFrom(o: ShipInput) {
         steer = o.steer; thrust = o.thrust
         fireHeld.clear(); fireHeld.addAll(o.fireHeld)
         shield = o.shield; cloak = o.cloak
+        leaveOrbit = o.leaveOrbit
     }
 }
 
@@ -49,6 +51,7 @@ class Ship(
     // don't know remote ships' loadouts.
     var maxHull = stats.maxHull
     var maxEnergy = stats.maxEnergy
+    var hullStyle = loadout.hullStyle
 
     val ammo = mutableMapOf<WeaponType, Int>()
     private val cooldowns = FloatArray(WeaponType.entries.size)
@@ -56,6 +59,19 @@ class Ship(
     var cloakOn = false
     var thrusting = false
     var kills = 0
+
+    // Planet orbit: while captured, the ship rides a circular parking orbit
+    // and slowly repairs its hull. Client mirrors only get [netOrbiting].
+    var orbitPlanet: Planet? = null
+    var orbitAngle = 0f
+    var orbitR = 0f
+    var orbitAngVel = 0f
+    var orbitCooldown = 0f     // grace period after leaving before re-capture
+    var netOrbiting = false
+    val inOrbit get() = orbitPlanet != null || netOrbiting
+
+    /** Grace period after a wormhole transit before another can grab us. */
+    var wormholeCooldown = 0f
 
     val input = ShipInput()
     var controller: ShipController? = null
@@ -73,28 +89,42 @@ class Ship(
         controller?.control(this, world, dt)
 
         for (i in cooldowns.indices) cooldowns[i] = max(0f, cooldowns[i] - dt)
+        orbitCooldown = max(0f, orbitCooldown - dt)
+        wormholeCooldown = max(0f, wormholeCooldown - dt)
 
         // Defenses stay up only while there is energy to feed them.
         shieldOn = input.shield && loadout.has(DefenseType.SHIELD) && energy > 1f
         cloakOn = input.cloak && loadout.has(DefenseType.CLOAK) && energy > 1f
 
-        // Turn toward the touched point; burn once roughly lined up.
+        val planet = orbitPlanet
         thrusting = false
-        val target = input.steer
-        if (target != null) {
-            val desired = atan2(target.y - pos.y, target.x - pos.x)
-            val diff = angleDiff(desired, heading)
-            val maxTurn = stats.turnRate * dt
-            heading = wrapAngle(heading + diff.coerceIn(-maxTurn, maxTurn))
-            if (input.thrust && abs(diff) < 1.2f && energy > 0.5f) {
-                vel += Vec2.fromAngle(heading, stats.thrustAccel * dt)
-                energy -= stats.thrustDrain * dt
-                thrusting = true
+        if (planet != null) {
+            // Parked: ride the orbit, mend the hull. Weapons stay live.
+            orbitAngle = wrapAngle(orbitAngle + orbitAngVel * dt)
+            val radial = Vec2.fromAngle(orbitAngle)
+            pos = planet.pos + radial * orbitR
+            val tangent = Vec2(-radial.y, radial.x) * (if (orbitAngVel >= 0f) 1f else -1f)
+            vel = tangent * (abs(orbitAngVel) * orbitR) + planet.vel
+            heading = tangent.angle()
+            hull = (hull + ORBIT_REPAIR_RATE * dt).coerceAtMost(maxHull)
+            if (input.leaveOrbit) leaveOrbit()
+        } else {
+            // Free flight: turn toward the touched point; burn once lined up.
+            val target = input.steer
+            if (target != null) {
+                val desired = atan2(target.y - pos.y, target.x - pos.x)
+                val diff = angleDiff(desired, heading)
+                val maxTurn = stats.turnRate * dt
+                heading = wrapAngle(heading + diff.coerceIn(-maxTurn, maxTurn))
+                if (input.thrust && abs(diff) < 1.2f && energy > 0.5f) {
+                    vel += Vec2.fromAngle(heading, stats.thrustAccel * dt)
+                    energy -= stats.thrustDrain * dt
+                    thrusting = true
+                }
             }
+            val sp = vel.length()
+            if (sp > stats.maxSpeed) vel = vel * (stats.maxSpeed / sp)
         }
-
-        val sp = vel.length()
-        if (sp > stats.maxSpeed) vel = vel * (stats.maxSpeed / sp)
 
         var drain = 0f
         if (shieldOn) drain += shieldDrain(loadout.level(DefenseType.SHIELD))
@@ -103,7 +133,30 @@ class Ship(
 
         for (w in WeaponType.entries) if (w in input.fireHeld) tryFire(world, w)
 
-        pos += vel * dt
+        if (planet == null) pos += vel * dt
+    }
+
+    /** Captured by a planet: set up the parking orbit continuing our swing. */
+    fun enterOrbit(planet: Planet) {
+        orbitPlanet = planet
+        orbitR = planet.radius + radius + 12f
+        val radial = (pos - planet.pos).normalized()
+        orbitAngle = radial.angle()
+        pos = planet.pos + radial * orbitR
+        // Keep circling the way we were already moving around the planet.
+        val tangent = Vec2(-radial.y, radial.x)
+        val side = if ((vel - planet.vel).dot(tangent) >= 0f) 1f else -1f
+        orbitAngVel = side * (ORBIT_LINEAR_SPEED / orbitR)
+    }
+
+    private fun leaveOrbit() {
+        val planet = orbitPlanet ?: return
+        val radial = Vec2.fromAngle(orbitAngle)
+        val tangent = Vec2(-radial.y, radial.x) * (if (orbitAngVel >= 0f) 1f else -1f)
+        vel = tangent * (ORBIT_LINEAR_SPEED * 1.4f) + radial * 70f + planet.vel
+        heading = vel.angle()
+        orbitPlanet = null
+        orbitCooldown = 1.5f
     }
 
     private fun tryFire(world: GameWorld, w: WeaponType) {
@@ -113,15 +166,20 @@ class Ship(
         if (spec.ammo >= 0 && (ammo[w] ?: 0) <= 0) return
         if (energy < spec.energyCost) return
 
+        if (w == WeaponType.ENERGY) {
+            // Beam weapon: only fires if something is locked in range.
+            if (!world.fireBeam(this, spec)) return
+        } else {
+            world.spawnShot(this, w, spec)
+        }
         energy -= spec.energyCost
         if (spec.ammo >= 0) ammo[w] = (ammo[w] ?: 0) - 1
         cooldowns[w.ordinal] = spec.cooldown
-        // Firing while cloaked decloaks you for a moment (drops the toggle).
+        // Firing while cloaked decloaks you (drops the toggle).
         if (cloakOn && w != WeaponType.MINE) {
             input.cloak = false
             cloakOn = false
         }
-        world.spawnShot(this, w, spec)
     }
 
     /** Apply damage; raised shields soak a fraction, paid for with energy. */
@@ -141,9 +199,14 @@ class Ship(
             world.onShipDestroyed(this, attackerId)
         }
     }
+
+    companion object {
+        const val ORBIT_REPAIR_RATE = 5f      // hull per second while parked
+        const val ORBIT_LINEAR_SPEED = 85f    // parking-orbit tangential speed
+    }
 }
 
-enum class ShotKind { SLUG, BOLT, MISSILE, MINE }
+enum class ShotKind { SLUG, MISSILE, MINE }
 
 class Shot(
     val id: Int,

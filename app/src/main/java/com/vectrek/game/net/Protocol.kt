@@ -2,9 +2,11 @@ package com.vectrek.game.net
 
 import com.vectrek.game.engine.GameWorld
 import com.vectrek.game.engine.Loadout
+import com.vectrek.game.engine.Beam
 import com.vectrek.game.engine.Ship
 import com.vectrek.game.engine.ShipInput
 import com.vectrek.game.engine.Shot
+import com.vectrek.game.engine.ShotKind
 import com.vectrek.game.engine.Vec2
 import com.vectrek.game.engine.WeaponType
 import org.json.JSONArray
@@ -16,10 +18,13 @@ import org.json.JSONObject
  * enemy ships are simply omitted from what a client is told about).
  *
  * client -> host:  hello { name, lo }   (repeated until welcomed)
- *                  in    { sx, sy, so, th, f[], sh, cl }
+ *                  in    { sx, sy, so, th, f[], sh, cl, lo }
  *                  bye   {}
  * host -> client:  wel   { id, seed, w, h }
- *                  snap  { tk, you, ships[], shots[], booms[] }
+ *                  snap  { tk, you, ships[], shots[], rocks[], booms[], beams[] }
+ *
+ * Scenery is rebuilt from the seed; asteroids drift, so their state rides
+ * along in every snapshot (index-aligned with the generated list).
  */
 object Protocol {
     const val DEFAULT_PORT = 47810
@@ -47,6 +52,7 @@ object Protocol {
         for (w in input.fireHeld) f.put(w.ordinal)
         o.put("f", f)
         o.put("sh", input.shield).put("cl", input.cloak)
+        o.put("lo", input.leaveOrbit)
         return o
     }
 
@@ -65,10 +71,17 @@ object Protocol {
         }
         into.shield = o.optBoolean("sh")
         into.cloak = o.optBoolean("cl")
+        into.leaveOrbit = o.optBoolean("lo")
     }
 
     /** Snapshot personalized for [forShipId]; cloaked enemies are omitted. */
-    fun snapshot(world: GameWorld, forShipId: Int, alive: Boolean, booms: List<Triple<Float, Float, Float>>): JSONObject {
+    fun snapshot(
+        world: GameWorld,
+        forShipId: Int,
+        alive: Boolean,
+        booms: List<Triple<Float, Float, Float>>,
+        beams: List<Beam>,
+    ): JSONObject {
         val o = JSONObject().put("t", "snap").put("tk", world.tick).put("you", alive)
         val ships = JSONArray()
         for (s in world.ships) {
@@ -86,11 +99,27 @@ object Protocol {
             )
         }
         o.put("shots", shots)
+        val rocks = JSONArray()
+        for (a in world.asteroids) {
+            rocks.put(
+                JSONArray().put(a.pos.x.toDouble()).put(a.pos.y.toDouble())
+                    .put(a.vel.x.toDouble()).put(a.vel.y.toDouble())
+            )
+        }
+        o.put("rocks", rocks)
         val bo = JSONArray()
         for ((x, y, size) in booms) {
             bo.put(JSONArray().put(x.toDouble()).put(y.toDouble()).put(size.toDouble()))
         }
         o.put("booms", bo)
+        val be = JSONArray()
+        for (b in beams) {
+            be.put(
+                JSONArray().put(b.from.x.toDouble()).put(b.from.y.toDouble())
+                    .put(b.to.x.toDouble()).put(b.to.y.toDouble())
+            )
+        }
+        o.put("beams", be)
         return o
     }
 
@@ -103,6 +132,8 @@ object Protocol {
             .put("hl", s.hull.toDouble()).put("mh", s.maxHull.toDouble())
             .put("en", s.energy.toDouble()).put("me", s.maxEnergy.toDouble())
             .put("sh", s.shieldOn).put("cl", s.cloakOn).put("th", s.thrusting)
+            .put("ob", s.inOrbit)
+            .put("st", s.hullStyle)
             .put("k", s.kills)
         if (own) {
             val am = JSONObject()
@@ -133,6 +164,8 @@ object Protocol {
             ship.shieldOn = js.getBoolean("sh")
             ship.cloakOn = js.getBoolean("cl")
             ship.thrusting = js.getBoolean("th")
+            ship.netOrbiting = js.optBoolean("ob")
+            ship.hullStyle = js.optInt("st")
             ship.kills = js.optInt("k")
             if (id == myId) {
                 val am = js.optJSONObject("am")
@@ -159,7 +192,7 @@ object Protocol {
                 existing.vel = vel
                 if (vel.lengthSq() > 1f) existing.heading = vel.angle()
             } else {
-                val kind = com.vectrek.game.engine.ShotKind.entries[ja.getInt(1)]
+                val kind = ShotKind.entries[ja.getInt(1)]
                 val shot = Shot(id, kind, ja.getInt(2), pos, vel, 0f, 999f)
                 shot.age = Shot.MINE_ARM_TIME + 1f  // render mines as armed
                 world.shots += shot
@@ -167,12 +200,29 @@ object Protocol {
         }
         world.shots.removeAll { it.id !in seenShots }
 
+        val rocks = o.optJSONArray("rocks") ?: JSONArray()
+        val n = minOf(rocks.length(), world.asteroids.size)
+        for (i in 0 until n) {
+            val ja = rocks.getJSONArray(i)
+            val a = world.asteroids[i]
+            a.pos = Vec2(ja.getDouble(0).toFloat(), ja.getDouble(1).toFloat())
+            a.vel = Vec2(ja.getDouble(2).toFloat(), ja.getDouble(3).toFloat())
+        }
+
         val booms = o.optJSONArray("booms") ?: JSONArray()
         for (i in 0 until booms.length()) {
             val b = booms.getJSONArray(i)
             world.addExplosion(
                 Vec2(b.getDouble(0).toFloat(), b.getDouble(1).toFloat()),
                 b.getDouble(2).toFloat(),
+            )
+        }
+        val beams = o.optJSONArray("beams") ?: JSONArray()
+        for (i in 0 until beams.length()) {
+            val b = beams.getJSONArray(i)
+            world.beams += Beam(
+                Vec2(b.getDouble(0).toFloat(), b.getDouble(1).toFloat()),
+                Vec2(b.getDouble(2).toFloat(), b.getDouble(3).toFloat()),
             )
         }
     }

@@ -31,6 +31,9 @@ class GameView(
     private var steerPointerId = -1
     private var steerScreen: Vec2? = null
     private val buttonPointers = HashMap<Int, Hud.Btn>()
+    // The tap is momentary but input packets are lossy state, so hold the
+    // leave-orbit flag up briefly; extra trues after release are no-ops.
+    @Volatile private var leaveOrbitUntil = 0L
 
     private var thread: Thread? = null
     @Volatile private var running = false
@@ -66,6 +69,7 @@ class GameView(
                 frameInput.copyFrom(localInput)
                 frameInput.steer = steerScreen?.let { renderer.screenToWorld(it) }
                 frameInput.thrust = steerScreen != null
+                frameInput.leaveOrbit = System.currentTimeMillis() < leaveOrbitUntil
             }
 
             var steps = 0
@@ -112,6 +116,7 @@ class GameView(
                     if (btn != null) {
                         buttonPointers[pid] = btn
                         btn.weapon?.let { localInput.fireHeld += it }
+                        if (btn.leaveOrbit) leaveOrbitUntil = System.currentTimeMillis() + 400
                         when (btn.defense) {
                             DefenseType.SHIELD -> localInput.shield = !localInput.shield
                             DefenseType.CLOAK -> localInput.cloak = !localInput.cloak

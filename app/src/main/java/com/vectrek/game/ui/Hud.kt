@@ -15,8 +15,9 @@ import kotlin.math.sin
 
 /**
  * All on-screen instrumentation: hull/energy bars, radar, weapon and defense
- * buttons, status line and the game-over overlay. Buttons are drawn on the
- * canvas and hit-tested by [hitTest] from the touch handler.
+ * buttons (along the top edge, clear of steering thumbs), the LEAVE ORBIT
+ * button, status line and overlays. Buttons are drawn on the canvas and
+ * hit-tested by [hitTest] from the touch handler.
  */
 class Hud(private val density: Float) {
 
@@ -24,12 +25,17 @@ class Hud(private val density: Float) {
         val label: String,
         val weapon: WeaponType? = null,
         val defense: DefenseType? = null,
+        val leaveOrbit: Boolean = false,
         var cx: Float = 0f,
         var cy: Float = 0f,
         var r: Float = 0f,
     )
 
     val buttons = mutableListOf<Btn>()
+    private val leaveBtn = Btn("LEAVE\nORBIT", leaveOrbit = true)
+    /** Updated during draw; read by the touch thread. */
+    @Volatile private var orbitBtnVisible = false
+
     private var laidOutW = -1
     private var laidOutH = -1
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE }
@@ -40,48 +46,56 @@ class Hud(private val density: Float) {
         if (w == laidOutW && h == laidOutH && buttons.isNotEmpty()) return
         laidOutW = w; laidOutH = h
         buttons.clear()
-        val r = dp(31f)
-        val gap = dp(80f)
-        val margin = dp(52f)
+        val r = dp(28f)
+        val gap = dp(70f)
+        val rowY = dp(104f)
 
-        val weapons = WeaponType.entries.filter { loadout.has(it) }
-        for ((i, wt) in weapons.withIndex()) {
-            val col = i % 2
-            val row = i / 2
-            buttons += Btn(wt.short, weapon = wt).apply {
-                cx = w - margin - col * gap
-                cy = h - margin - row * gap
-                this.r = r
-            }
-        }
+        // Defenses: row leading in from the left edge (below the bars).
         val defenses = DefenseType.entries.filter { loadout.has(it) }
         for ((i, dt) in defenses.withIndex()) {
-            val col = i % 2
-            val row = i / 2
             buttons += Btn(dt.short, defense = dt).apply {
-                cx = margin + col * gap
-                cy = h - margin - row * gap
+                cx = dp(50f) + i * gap
+                cy = rowY
                 this.r = r
             }
         }
+        // Weapons: row leading in from the right edge (left of the radar).
+        val weapons = WeaponType.entries.filter { loadout.has(it) }
+        for ((i, wt) in weapons.withIndex()) {
+            buttons += Btn(wt.short, weapon = wt).apply {
+                cx = w - dp(180f) - i * gap
+                cy = rowY
+                this.r = r
+            }
+        }
+        leaveBtn.cx = w / 2f
+        leaveBtn.cy = h - dp(64f)
+        leaveBtn.r = dp(34f)
     }
 
-    fun hitTest(x: Float, y: Float): Btn? =
-        buttons.firstOrNull {
+    fun hitTest(x: Float, y: Float): Btn? {
+        if (orbitBtnVisible) {
+            val dx = x - leaveBtn.cx; val dy = y - leaveBtn.cy
+            if (dx * dx + dy * dy < leaveBtn.r * leaveBtn.r * 1.6f) return leaveBtn
+        }
+        return buttons.firstOrNull {
             val dx = x - it.cx; val dy = y - it.cy
             dx * dx + dy * dy < it.r * it.r * 1.4f
         }
+    }
 
     // ------------------------------------------------------------------
 
     fun draw(canvas: Canvas, session: GameSession, me: Ship?, input: ShipInput, time: Float) {
         val w = canvas.width.toFloat()
 
+        orbitBtnVisible = me != null && me.inOrbit
         if (me != null) {
             layout(canvas.width, canvas.height, me.loadout)
             drawBars(canvas, me)
             drawRadar(canvas, session, me, time)
-            drawButtons(canvas, me, input, time)
+            drawButtons(canvas, session, me, input, time)
+            if (me.inOrbit) drawLeaveOrbit(canvas, time)
         }
         drawStatusLine(canvas, session, me, w)
         drawOverlays(canvas, session, w, canvas.height.toFloat())
@@ -150,10 +164,9 @@ class Hud(private val density: Float) {
         }
 
         for (aRock in world.asteroids) blip(aRock.pos.x, aRock.pos.y, Palette.ASTEROID, dp(1.5f))
-        for (b in world.barriers) blip(b.cx, b.cy, Palette.BARRIER, dp(2f))
         for (s in world.stars) blip(s.pos.x, s.pos.y, Palette.STAR, dp(3f))
         for (p in world.planets) blip(p.pos.x, p.pos.y, Palette.PLANET, dp(2f))
-        for (h in world.blackHoles) blip(h.pos.x, h.pos.y, Palette.HOLE, dp(3f))
+        for (h in world.wormholes) blip(h.pos.x, h.pos.y, Palette.HOLE, dp(3f))
         for (shot in world.shots) {
             when (shot.kind) {
                 ShotKind.MINE -> if (shot.ownerId == me.id) blip(shot.pos.x, shot.pos.y, Palette.MINE, dp(1.5f))
@@ -169,12 +182,14 @@ class Hud(private val density: Float) {
         canvas.drawCircle(cx, cy, dp(2f), paint)
     }
 
-    private fun drawButtons(canvas: Canvas, me: Ship, input: ShipInput, time: Float) {
+    private fun drawButtons(canvas: Canvas, session: GameSession, me: Ship, input: ShipInput, time: Float) {
+        val world = session.world
         for (b in buttons) {
             var color = Palette.SELF
             var active = false
             var sub = ""
             var usable = true
+            var locked = false
 
             val wt = b.weapon
             if (wt != null) {
@@ -189,6 +204,12 @@ class Hud(private val density: Float) {
                 } else {
                     sub = "${spec.energyCost.toInt()}e"
                     if (me.energy < spec.energyCost) usable = false
+                    // Phaser lock indicator: something visible is in beam range.
+                    locked = world != null && world.ships.any {
+                        it.alive && it.id != me.id && !it.cloakOn &&
+                            it.pos.dist(me.pos) <= spec.range
+                    }
+                    if (!locked) usable = false
                 }
                 active = wt in input.fireHeld
             }
@@ -202,15 +223,15 @@ class Hud(private val density: Float) {
                 if (me.energy < 2f) usable = false
             }
 
-            if (active) {
+            if (active || locked) {
                 paint.style = Paint.Style.FILL
-                paint.color = color
-                paint.alpha = 60
+                paint.color = if (locked && !active) Palette.BOLT else color
+                paint.alpha = if (locked && !active) (40 + 25 * sin(time * 8f)).toInt().coerceIn(20, 70) else 60
                 canvas.drawCircle(b.cx, b.cy, b.r, paint)
             }
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = dp(1.8f)
-            paint.color = color
+            paint.color = if (locked) Palette.BOLT else color
             paint.alpha = if (usable) 220 else 80
             canvas.drawCircle(b.cx, b.cy, b.r, paint)
 
@@ -242,19 +263,38 @@ class Hud(private val density: Float) {
         }
     }
 
+    private fun drawLeaveOrbit(canvas: Canvas, time: Float) {
+        val b = leaveBtn
+        paint.style = Paint.Style.FILL
+        paint.color = Palette.PLANET
+        paint.alpha = (30 + 20 * sin(time * 4f)).toInt().coerceIn(15, 55)
+        canvas.drawCircle(b.cx, b.cy, b.r, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = dp(2f)
+        paint.alpha = 230
+        canvas.drawCircle(b.cx, b.cy, b.r, paint)
+        paint.style = Paint.Style.FILL
+        paint.textAlign = Paint.Align.CENTER
+        paint.textSize = dp(10f)
+        paint.alpha = 255
+        canvas.drawText("LEAVE", b.cx, b.cy - dp(2f), paint)
+        canvas.drawText("ORBIT", b.cx, b.cy + dp(9f), paint)
+    }
+
     private fun drawStatusLine(canvas: Canvas, session: GameSession, me: Ship?, w: Float) {
         paint.style = Paint.Style.FILL
         paint.textAlign = Paint.Align.CENTER
         paint.textSize = dp(10f)
         paint.color = Palette.TEXT_DIM
         paint.alpha = 220
+        val orbiting = if (me?.inOrbit == true) "  ·  IN ORBIT: REPAIRING" else ""
         val status = when (session.mode) {
-            GameSession.Mode.SINGLE -> "PRACTICE ARENA  ·  KILLS ${me?.kills ?: 0}"
+            GameSession.Mode.SINGLE -> "PRACTICE ARENA  ·  KILLS ${me?.kills ?: 0}$orbiting"
             GameSession.Mode.HOST -> {
                 val s = session.server
-                "HOSTING ${s?.localAddress}:${s?.port}  ·  SHIPS ${session.world?.ships?.size ?: 0}  ·  KILLS ${me?.kills ?: 0}"
+                "HOSTING ${s?.localAddress}:${s?.port}  ·  SHIPS ${session.world?.ships?.size ?: 0}  ·  KILLS ${me?.kills ?: 0}$orbiting"
             }
-            GameSession.Mode.CLIENT -> "BATTLE LINK  ·  SHIPS ${session.world?.ships?.size ?: 0}  ·  KILLS ${me?.kills ?: 0}"
+            GameSession.Mode.CLIENT -> "BATTLE LINK  ·  SHIPS ${session.world?.ships?.size ?: 0}  ·  KILLS ${me?.kills ?: 0}$orbiting"
         }
         canvas.drawText(status, w / 2f, dp(18f), paint)
     }
