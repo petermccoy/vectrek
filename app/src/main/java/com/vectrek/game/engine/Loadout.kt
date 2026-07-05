@@ -36,7 +36,9 @@ data class WeaponSpec(
 
 fun weaponSpec(type: WeaponType, level: Int): WeaponSpec = when (type) {
     WeaponType.PROJECTILE -> WeaponSpec(8f + 3f * level, 40 + 15 * level, 0.24f, 0f, 575f, 1.8f)
-    WeaponType.ENERGY -> WeaponSpec(16f + 5f * level, -1, 0.55f, 12f - 1.5f * level, 0f, 0f, 620f + 60f * level)
+    // Phasers never miss, so they hit softer and recharge slowly; damage is
+    // split again on the target: half to hull, half drains their energy.
+    WeaponType.ENERGY -> WeaponSpec(10f + 3f * level, -1, 1.2f, 12f - 1.5f * level, 0f, 0f, 620f + 60f * level)
     WeaponType.GUIDED -> WeaponSpec(26f + 8f * level, 6 + 3 * level, 1.2f, 0f, 370f, 6.5f)
     WeaponType.MINE -> WeaponSpec(34f + 10f * level, 5 + 3 * level, 0.8f, 0f, 0f, 90f)
 }

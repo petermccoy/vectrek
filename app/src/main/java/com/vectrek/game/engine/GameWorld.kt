@@ -445,7 +445,10 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
             beams += beam
             beamLog += beam
             addExplosion(t.pos, 22f)
-            t.takeDamage(this, each, owner.id)
+            // Disruptor behavior: half the beam burns hull (shields can soak
+            // it), half scrambles the target's energy banks directly.
+            t.energy = (t.energy - each * 0.5f).coerceAtLeast(0f)
+            t.takeDamage(this, each * 0.5f, owner.id)
         }
         return true
     }

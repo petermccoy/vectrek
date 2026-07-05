@@ -67,8 +67,9 @@ class LoadoutActivity : Activity() {
                     if (s.ammo >= 0) {
                         "dmg ${s.damage.toInt()} · ammo ${s.ammo}"
                     } else {
-                        "beam: locks all ships in ${s.range.toInt()} range, " +
-                            "dmg ${s.damage.toInt()} split · ${s.energyCost.toInt()} energy/shot"
+                        "beam: locks all ships in ${s.range.toInt()} range · " +
+                            "dmg ${s.damage.toInt()} split across targets, half hull half energy · " +
+                            "${s.energyCost.toInt()} energy/shot"
                     }
                 },
             ), Ui.match())

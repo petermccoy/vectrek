@@ -287,7 +287,7 @@ class Hud(private val density: Float) {
         paint.textSize = dp(10f)
         paint.color = Palette.TEXT_DIM
         paint.alpha = 220
-        val orbiting = if (me?.inOrbit == true) "  ·  IN ORBIT: REPAIRING" else ""
+        val orbiting = if (me?.inOrbit == true) "  ·  IN ORBIT: REPAIR & REARM" else ""
         val status = when (session.mode) {
             GameSession.Mode.SINGLE -> "PRACTICE ARENA  ·  KILLS ${me?.kills ?: 0}$orbiting"
             GameSession.Mode.HOST -> {

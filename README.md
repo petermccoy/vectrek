@@ -21,9 +21,9 @@ Pure Kotlin, zero external dependencies — just the Android framework
   flings you out of its twin somewhere else on the board, velocity intact —
   shots ride wormholes too.
 - **Planets**: brush against one and your ship is captured into a parking
-  orbit where the hull slowly repairs — the only way to fix damage. A
-  LEAVE ORBIT button appears to cast off. You can still fire (and be hit)
-  while parked.
+  orbit where the hull slowly repairs and planetary stores refill your
+  ammunition — the only way to fix damage or rearm. A LEAVE ORBIT button
+  appears to cast off. You can still fire (and be hit) while parked.
 - **Energy**: one shared pool feeds thrust, the energy weapon, shields and
   cloak. It regenerates slowly toward its maximum. Manage it or drift.
 - **Hull**: damage only mends in planetary orbit. When the hull reaches
@@ -34,7 +34,7 @@ Pure Kotlin, zero external dependencies — just the Android framework
 | System | Type | Limits |
 |---|---|---|
 | Cannon | fast projectile | limited ammo |
-| Phaser | lock-on beam: instantly hits every visible ship in range, damage split among them | unlimited, costs energy per shot |
+| Phaser | lock-on beam: instantly hits every visible ship in range, damage split among them — and on each target, half burns hull, half drains their energy banks | unlimited, costs energy per shot, slow recharge |
 | Missiles | guided, homes on nearest visible ship | limited ammo |
 | Mines | dropped behind, proximity-triggered blast | limited ammo |
 | Shields | soaks most of a hit, energy pays for what it absorbs | drains energy while raised |

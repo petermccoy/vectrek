@@ -55,6 +55,7 @@ class Ship(
 
     val ammo = mutableMapOf<WeaponType, Int>()
     private val cooldowns = FloatArray(WeaponType.entries.size)
+    private val restockFrac = FloatArray(WeaponType.entries.size)
     var shieldOn = false
     var cloakOn = false
     var thrusting = false
@@ -112,6 +113,7 @@ class Ship(
             vel = tangent * (abs(orbitAngVel) * orbitR) + planet.vel
             heading = tangent.angle()
             hull = (hull + ORBIT_REPAIR_RATE * dt).coerceAtMost(maxHull)
+            restockAmmo(dt)
             if (input.leaveOrbit) leaveOrbit()
         } else {
             // Free flight: turn toward the touched point; burn once lined up.
@@ -139,6 +141,23 @@ class Ship(
         for (w in WeaponType.entries) if (w in input.fireHeld) tryFire(world, w)
 
         if (planet == null) pos += vel * dt
+    }
+
+    /** Planetary stores refill magazines while parked (full in ~25s). */
+    private fun restockAmmo(dt: Float) {
+        for ((w, lvl) in loadout.weapons) {
+            val spec = weaponSpec(w, lvl)
+            if (spec.ammo < 0) continue
+            val current = ammo[w] ?: 0
+            if (current >= spec.ammo) continue
+            val i = w.ordinal
+            restockFrac[i] += spec.ammo / RESTOCK_SECONDS * dt
+            if (restockFrac[i] >= 1f) {
+                val add = restockFrac[i].toInt()
+                restockFrac[i] -= add
+                ammo[w] = (current + add).coerceAtMost(spec.ammo)
+            }
+        }
     }
 
     /** Captured by a planet: set up the parking orbit continuing our swing. */
@@ -208,6 +227,7 @@ class Ship(
     companion object {
         const val ORBIT_REPAIR_RATE = 5f      // hull per second while parked
         const val ORBIT_LINEAR_SPEED = 85f    // parking-orbit tangential speed
+        const val RESTOCK_SECONDS = 25f       // full magazine refill time
     }
 }
 
