@@ -64,16 +64,16 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
             return null
         }
 
-        // Suns with 1-4 orbiting planets each
+        // Suns with 1-4 orbiting planets each, spread across wide orbits
         repeat(2) {
-            val starRadius = rand(40f, 55f)
+            val starRadius = rand(20f, 28f)
             val planetCount = 1 + rnd.nextInt(4)
-            val maxOrbit = starRadius + 90f + (planetCount - 1) * 62f + 20f
+            val maxOrbit = starRadius + 110f + (planetCount - 1) * 95f + 35f
             val p = place(maxOrbit + 60f) ?: return@repeat
-            val star = Star(p, starRadius, 1.9e7f)
+            val star = Star(p, starRadius, 9.5e6f)
             stars += star
             for (i in 0 until planetCount) {
-                val orbitR = starRadius + 90f + i * 62f + rand(0f, 16f)
+                val orbitR = starRadius + 110f + i * 95f + rand(0f, 30f)
                 planets += Planet(
                     star, orbitR, rand(0f, TWO_PI),
                     (if (rnd.nextBoolean()) 1f else -1f) * rand(0.12f, 0.3f),
@@ -85,7 +85,7 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
         // Paired wormholes: fall into one, get flung out of the other
         repeat(2) {
             val p = place(300f) ?: return@repeat
-            wormholes += Wormhole(p, 27f, 3.0e7f)
+            wormholes += Wormhole(p, 27f, 1.5e7f)
         }
 
         // Slowly drifting asteroid field
