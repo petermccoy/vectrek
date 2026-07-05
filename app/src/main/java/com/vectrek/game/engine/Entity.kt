@@ -70,7 +70,10 @@ class Ship(
     var netOrbiting = false
     val inOrbit get() = orbitPlanet != null || netOrbiting
 
-    /** Grace period after a wormhole transit before another can grab us. */
+    /**
+     * Grace period after a wormhole transit: no wormhole can grab us and
+     * gravity leaves us alone, so we can actually climb out of the well.
+     */
     var wormholeCooldown = 0f
 
     val input = ShipInput()

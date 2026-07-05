@@ -143,7 +143,10 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
 
         for (s in ships) {
             if (!s.alive) continue
-            if (s.orbitPlanet == null) s.vel += gravityAt(s.pos) * dt
+            // Fresh wormhole transits get a grace period of gravity immunity;
+            // the exit point sits deep inside the well, and without it slow
+            // ships are yanked straight back through in a ping-pong loop.
+            if (s.orbitPlanet == null && s.wormholeCooldown <= 0f) s.vel += gravityAt(s.pos) * dt
             s.update(this, dt)
             if (s.orbitPlanet == null) {
                 collideShipWithWorld(s)
@@ -332,7 +335,10 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
             var dir = s.vel.normalized()
             if (s.vel.length() < 20f) dir = (s.pos - hole.pos).normalized()
             s.pos = exit.pos + dir * (exit.horizon + s.radius + 40f)
-            s.wormholeCooldown = 1.5f
+            // Eject with at least escape-worthy speed so dead-drifters clear
+            // the well before their gravity immunity runs out.
+            if (s.vel.length() < MIN_WORMHOLE_EXIT_SPEED) s.vel = dir * MIN_WORMHOLE_EXIT_SPEED
+            s.wormholeCooldown = WORMHOLE_GRACE
             addExplosion(s.pos, 30f)
             return
         }
@@ -465,5 +471,11 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
         val e = Explosion(pos, size)
         explosions += e
         boomLog += e
+    }
+
+    companion object {
+        /** Post-transit window: no re-entry and no gravity on the ship. */
+        const val WORMHOLE_GRACE = 2f
+        const val MIN_WORMHOLE_EXIT_SPEED = 180f
     }
 }
