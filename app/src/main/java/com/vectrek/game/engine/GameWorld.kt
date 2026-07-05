@@ -143,10 +143,13 @@ class GameWorld(val seed: Long, val width: Float = 8000f, val height: Float = 60
 
         for (s in ships) {
             if (!s.alive) continue
-            // Fresh wormhole transits get a grace period of gravity immunity;
-            // the exit point sits deep inside the well, and without it slow
-            // ships are yanked straight back through in a ping-pong loop.
-            if (s.orbitPlanet == null && s.wormholeCooldown <= 0f) s.vel += gravityAt(s.pos) * dt
+            // Fresh wormhole transits and orbit departures get a grace period
+            // of gravity immunity: both leave the ship deep inside a well
+            // (the wormhole's own, or the sun the planet circles), and
+            // without it slow ships are dragged straight back in.
+            if (s.orbitPlanet == null && s.wormholeCooldown <= 0f && s.orbitCooldown <= 0f) {
+                s.vel += gravityAt(s.pos) * dt
+            }
             s.update(this, dt)
             if (s.orbitPlanet == null) {
                 collideShipWithWorld(s)

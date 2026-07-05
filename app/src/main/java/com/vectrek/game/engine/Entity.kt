@@ -66,7 +66,9 @@ class Ship(
     var orbitAngle = 0f
     var orbitR = 0f
     var orbitAngVel = 0f
-    var orbitCooldown = 0f     // grace period after leaving before re-capture
+    /** Post-departure grace: no re-capture and no gravity, so casting off
+     *  doesn't slide the ship down into the planet's sun. */
+    var orbitCooldown = 0f
     var netOrbiting = false
     val inOrbit get() = orbitPlanet != null || netOrbiting
 
@@ -159,7 +161,7 @@ class Ship(
         vel = tangent * (ORBIT_LINEAR_SPEED * 1.4f) + radial * 70f + planet.vel
         heading = vel.angle()
         orbitPlanet = null
-        orbitCooldown = 1.5f
+        orbitCooldown = 2f
     }
 
     private fun tryFire(world: GameWorld, w: WeaponType) {
